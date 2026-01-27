@@ -1,31 +1,61 @@
+connection normale 
 
 npm install prisma --save-dev
-npx prisma init 
+npx prisma init
+
+Pour env
 
 
 model User {
-  id    Int    @id @default(autoincrement())
-  name  String
-  email String @unique
-  age   Int
-  posts Post[]
+  id          Int      @id @default(autoincrement())
+  supabaseId  String   @unique
+  email       String   @unique
+  role        Role     @default(USER)
+  isActive    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  profile     Profile?
+  posts       Post[]
+}
+
+model Profile {
+  id        Int     @id @default(autoincrement())
+  userId    Int     @unique
+  username  String?
+  avatarUrl String?
+  bio       String?
+
+  user      User    @relation(fields: [userId], references: [id])
 }
 
 model Post {
-  id      Int    @id @default(autoincrement())
-  title   String
-  comment String
-  userId  Int
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String
+  createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id])
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
+npx prisma db push
+
+npm install @supabase/supabase-js
 
 
-npx prisma migrate dev --name user-basic
+npm install @nestjs/config
+ ConfigModule.forRoot({
+      isGlobal: true,
+    })
 
 
-npx prisma generate
+synchro
+
 
 npm install @prisma/client
 npm install @prisma/client @prisma/adapter-pg pg
@@ -59,32 +89,97 @@ app.useGlobalPipes(
     transform: true,
   }),
 );
- 
-Pour generer guard
-nest g guard auth
-
-const request=context.switchToHttp().getRequest()
-    if(!request.body) return false
-    const email = request.headers['email'];
-  const password = request.headers['password'];
-
-  if (!email || !password) return false;
-
-  const user = await this.prisma.user.findUnique({
-    where: { email: String(email) }
-  });
-
-  if (!user || user.password !== password) return false;
-
-  return true;
 
 
-asher le mot de passe
-import * as bcrypt from 'bcrypt';
+Installation le JWT
 
-npm install bcrypt 
-npm install -D @types/bcrypt
-await bcrypt.hash(data.password,10);
- ...data,
-                password:mod
+npm install jsonwebtoken
+npm install --save-dev @types/jsonwebtoken
+
+import * as jwt from 'jsonwebtoken';
+
+
+  const token = jwt.sign(
+    { userId: user.id, supabaseId: user.supabaseId },
+    process.env.JWT_SECRET || 'defaultsecret',
+    { expiresIn: '1d' }
+  );
+
+apres pour le guard installer ceci 
+
+npm install @nestjs/passport passport passport-jwt
+
+
+
+puis 
+
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  ForbiddenException,
+} from '@nestjs/common';
+import { Request } from 'express';
+import jwt from 'jsonwebtoken';
+import { PrismaService } from 'src/prisma/prisma.service';
+
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(private prisma: PrismaService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest<Request>();
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new ForbiddenException('Token manquant');
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+      const payload = jwt.verify(
+        token,
+        process.env.JWT_SECRET!,
+      ) as { userId: number; supabaseId: string };
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.userId },
+        include: { profile: true },
+      });
+
+      if (!user || !user.isActive) {
+        throw new ForbiddenException('Utilisateur invalide');
+      }
+
+      // 🔥 Injection propre
+      req['user'] = user;
+
+      return true;
+    } catch (err) {
+      throw new ForbiddenException('Token invalide');
+    }
+  }
+}
+
+ async uploadAvatar(userId: number, file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('File required');
+
+    const filename = `${userId}-${Date.now()}`;
+
+    await this.supabase.Admin.storage
+      .from('avatars')
+      .upload(filename, file.buffer, {
+        contentType: file.mimetype,
+      });
+
+    const { data } = this.supabase.Admin.storage
+      .from('avatars')
+      .getPublicUrl(filename);
+
+    return this.prisma.profile.update({
+      where: { userId },
+      data: { avatarUrl: data.publicUrl },
+    });
+  }
 
